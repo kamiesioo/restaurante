@@ -1,33 +1,16 @@
 // Arranque "portable" para pruebas: datos de demo, ARCA simulado, IP local para los QR.
-import { createServer } from 'node:http';
-import { networkInterfaces } from 'node:os';
-import { loadConfig } from '../src/config.js';
-import { openDb } from '../src/db.js';
-import { createContext } from '../src/services/common.js';
-import { createApp } from '../src/server.js';
-import { seedDemo, DEMO_USERS } from './demo-data.js';
+import { startLocal } from '../src/launcher.js';
+import { DEMO_USERS } from '../src/demo-data.js';
 
-const port = Number(process.env.PORT || 3000);
-const lan = Object.values(networkInterfaces()).flat()
-  .find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
-
-const config = loadConfig({
+const { config, port } = await startLocal({
+  port: Number(process.env.PORT || 3000),
+  dbPath: process.env.DB_PATH || 'datos/demo.db',
   machineId: process.env.MACHINE_ID || 'demo-pc',
   registerId: process.env.REGISTER_ID || 'PB',
-  port,
-  dbPath: process.env.DB_PATH || 'datos/demo.db',
-  publicBaseUrl: process.env.PUBLIC_BASE_URL || `http://${lan ?? 'localhost'}:${port}`,
-  arca: { mode: process.env.ARCA_MODE || 'mock', cuit: '', ptoVta: 1, issuerCondition: 'RI', identifyAboveCents: 0 },
+  arcaMode: process.env.ARCA_MODE || 'mock',
 });
-const ctx = createContext({ db: openDb(config.dbPath), config });
 
-if (!ctx.db.get('SELECT 1 FROM user')) {
-  seedDemo(ctx);
-  console.log('Se cargaron datos de demostración.');
-}
-
-createServer(createApp(ctx)).listen(config.port, '0.0.0.0', () => {
-  console.log(`
+console.log(`
  ================================================================
   RESTAURANTE - MODO PRUEBA  (máquina "${config.machineId}", caja ${config.registerId})
  ================================================================
@@ -42,4 +25,3 @@ createServer(createApp(ctx)).listen(config.port, '0.0.0.0', () => {
   Para cerrar: Ctrl+C o cerrar esta ventana.
  ================================================================
 `);
-});

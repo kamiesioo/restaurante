@@ -42,6 +42,22 @@ Configuración por máquina (variables de entorno, ver `src/config.js`):
 URLs: `/cocina` (staff: login, cocina/barra y salón) y `/m/<token>` (cliente).
 `GET /api/tables/qr-links` (cajero/admin) lista la URL a imprimir en cada mesa.
 
+## App de escritorio (Electron)
+
+La misma app dentro de una ventana propia, con menú para elegir la caja de la PC,
+copiar la dirección para celulares, abrir la carpeta de datos y borrar los datos de prueba.
+
+```sh
+scripts/build-desktop.sh linux   # dist/restaurante-desktop-linux-x64.tar.gz
+scripts/build-desktop.sh win     # dist/restaurante-desktop-win32-x64.zip
+scripts/build-desktop.sh all     # las dos
+```
+
+Linux: `tar -xzf restaurante-desktop-linux-x64.tar.gz && ./restaurante-linux-x64/restaurante`
+(si falla el sandbox: `./restaurante --no-sandbox`). Windows: descomprimir y abrir `restaurante.exe`.
+Los datos quedan en la carpeta de usuario de la app (`~/.config/restaurante/datos` en Linux).
+Las herramientas de build se instalan en `.cache/`; el proyecto sigue sin dependencias.
+
 ## Sobre facturar o no facturar
 
 El sistema **no** incluye una opción para dejar ventas fuera del registro. Todo

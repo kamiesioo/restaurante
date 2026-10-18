@@ -1,7 +1,7 @@
-import { createUser, login } from '../src/services/auth.js';
-import { createCategory, createProduct } from '../src/services/catalog.js';
-import { createTable } from '../src/services/tables.js';
-import { ensureRegister } from '../src/services/cash.js';
+import { createUser, login } from './services/auth.js';
+import { createCategory, createProduct } from './services/catalog.js';
+import { createTable } from './services/tables.js';
+import { ensureRegister } from './services/cash.js';
 
 // Datos de prueba. Los PIN son públicos a propósito: NO usar en producción.
 export const DEMO_USERS = [

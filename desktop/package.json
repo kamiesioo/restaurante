@@ -1,0 +1,9 @@
+{
+  "name": "restaurante-desktop",
+  "productName": "Restaurante",
+  "version": "0.1.0",
+  "description": "Restaurante - app de escritorio (modo prueba)",
+  "main": "desktop/main.mjs",
+  "author": "Restaurante",
+  "type": "module"
+}
