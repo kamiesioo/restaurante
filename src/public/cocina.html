@@ -8,6 +8,7 @@
   :root { --bg:#fff; --fg:#1d1d1f; --mute:#6e6e73; --line:#e5e5ea; --acc:#0a7d4f; --warn:#b45309; }
   @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#f2f2f2; --mute:#9a9aa0; --line:#2a2a2e; --acc:#34c78a; --warn:#f59e0b; } }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin:0; font:16px/1.4 system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px; }
   header { display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
   header h1 { font-size:20px; margin:0; flex:1; }

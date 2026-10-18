@@ -7,8 +7,9 @@ import { buildRoutes } from './routes.js';
 import { userFromToken } from './services/auth.js';
 
 const PAGES = {
-  '/': 'cocina.html', // pantalla de staff (login + cola); las demás se agregan acá
+  '/': 'panel.html',
   '/cocina': 'cocina.html',
+  '/panel': 'panel.html',
 };
 const page = (name) => readFileSync(new URL(`./public/${name}`, import.meta.url));
 

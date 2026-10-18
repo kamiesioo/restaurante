@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel</title>
+<style>
+  :root { --bg:#fff; --fg:#1d1d1f; --mute:#6e6e73; --line:#e5e5ea; --card:#f7f7f9; --acc:#0a7d4f; --warn:#b45309; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#f2f2f2; --mute:#9a9aa0; --line:#2a2a2e; --card:#1a1a1d; --acc:#34c78a; --warn:#f59e0b; --bad:#f97066; } }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin:0; font:15px/1.4 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; gap:8px; align-items:center; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header .who { flex:1; font-weight:600; } header .mute { color:var(--mute); font-weight:400; }
+  nav { display:flex; gap:4px; padding:8px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  nav button.on { background:var(--fg); color:var(--bg); }
+  main { padding:16px; max-width:1100px; margin:0 auto; }
+  button, select, input { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:8px; padding:7px 12px; }
+  button { cursor:pointer; } button.pri { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; } button.bad { color:var(--bad); }
+  button:disabled { opacity:.4; cursor:default; }
+  input[type=number] { width:110px; } input.wide { width:100%; }
+  h2 { font-size:15px; margin:20px 0 8px; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .tbl { text-align:left; padding:12px; border-radius:10px; background:var(--card); border:2px solid var(--line); }
+  .tbl b { display:block; font-size:16px; } .tbl small { color:var(--mute); }
+  .tbl.ocupada { border-color:var(--acc); } .tbl.pidio_cuenta { border-color:var(--warn); }
+  .row { display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .row .g { flex:1; min-width:140px; } .mute { color:var(--mute); } .tag { font-size:12px; padding:2px 8px; border-radius:99px; background:var(--card); border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:12px 0; }
+  table { border-collapse:collapse; width:100%; } td, th { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top; }
+  #msg { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); background:var(--fg); color:var(--bg); padding:8px 16px; border-radius:8px; display:none; max-width:90vw; z-index:9; }
+  #login { max-width:320px; margin:10vh auto; display:grid; gap:10px; padding:0 16px; }
+</style>
+</head>
+<body>
+<div id="login"><h1>Ingresar</h1><select id="user"></select>
+  <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off"><button class="pri" id="go">Entrar</button></div>
+<div id="app" hidden>
+  <header><span class="who" id="who"></span><a href="/cocina" target="_blank"><button>Pantalla cocina</button></a><button id="out">Salir</button></header>
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div id="msg"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const money = (c) => (c / 100).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
+const btn = (label, fn, cls) => { const b = el('button', cls, label); b.onclick = async () => { try { await fn(); } catch (e) { toast(e.message); } }; return b; };
+let S = null, tab = null, openTable = null, menuCache = null, es = null;
+
+function toast(t) { const m = $('msg'); m.textContent = t; m.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => (m.style.display = 'none'), 3500); }
+async function api(method, path, body) {
+  const r = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json', ...(S && { Authorization: 'Bearer ' + S.token }) }, body: body && JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) { if (r.status === 401 && S) logout(true); throw new Error(j.error || 'Error'); }
+  return j;
+}
+const ROLE_TABS = {
+  admin: ['Salón', 'Caja', 'Admin', 'Facturas', 'Auditoría'],
+  cajero: ['Salón', 'Caja', 'Facturas'],
+  mozo: ['Salón'], cocina: ['Salón'],
+};
+const STATE_ES = { libre: 'Libre', ocupada: 'Ocupada', pidio_cuenta: 'Pidió la cuenta' };
+const ITEM_ES = { por_confirmar: 'por confirmar', enviado: 'enviado', en_preparacion: 'preparando', listo: 'listo', entregado: 'entregado', cancelado: 'cancelado' };
+
+// ---------- Salón ----------
+async function viewSalon(root) {
+  const tables = await api('GET', '/tables');
+  const grid = el('div', 'grid');
+  for (const t of tables) {
+    const b = el('button', 'tbl ' + t.state);
+    b.append(el('b', null, `${t.sector} · ${t.number}`), el('small', null, STATE_ES[t.state] + (t.total_cents ? ' · ' + money(t.total_cents) : '')));
+    b.onclick = () => { openTable = t; render(); };
+    grid.append(b);
+  }
+  root.append(grid);
+  if (openTable) {
+    const t = tables.find((x) => x.id === openTable.id) ?? openTable;
+    root.append(await orderBox(t));
+  }
+}
+async function orderBox(t) {
+  const box = el('div', 'box');
+  box.append(el('h2', null, `Mesa ${t.sector} · ${t.number}`));
+  if (!t.order_id) {
+    box.append(btn('Abrir pedido', async () => { await api('POST', '/orders', { tableId: t.id }); render(); }, 'pri'));
+    return box;
+  }
+  const o = await api('GET', '/orders/' + t.order_id);
+  const role = S.user.role;
+  const canMozo = ['mozo', 'cajero', 'admin'].includes(role), canCook = ['cocina', 'cajero', 'admin'].includes(role);
+  for (const i of o.items) {
+    const row = el('div', 'row');
+    row.append(el('span', 'g', `${i.qty} × ${i.name_snap}${i.notes ? ' — ' + i.notes : ''}`), el('span', 'mute', money(i.unit_price_cents * i.qty)), el('span', 'tag', ITEM_ES[i.status]));
+    const act = (label, status, cls) => row.append(btn(label, async () => { await api('POST', `/items/${i.id}/status`, { status }); render(); }, cls));
+    if (i.status === 'por_confirmar' && canMozo) row.append(btn('Confirmar', async () => { await api('POST', '/items/confirm', { itemIds: [i.id] }); render(); }, 'pri'));
+    if (i.status === 'enviado' && canCook) act('Preparar', 'en_preparacion');
+    if (['enviado', 'en_preparacion'].includes(i.status) && canCook) act('Listo', 'listo');
+    if (i.status === 'listo' && canMozo) act('Entregado', 'entregado', 'pri');
+    if (!['entregado', 'cancelado'].includes(i.status) && canMozo) row.append(btn('Cancelar', async () => {
+      const reason = prompt('Motivo de la cancelación'); if (!reason) return;
+      await api('POST', `/items/${i.id}/status`, { status: 'cancelado', reason }); render();
+    }, 'bad'));
+    box.append(row);
+  }
+  box.append(el('div', 'row', ''));
+  const tot = el('div', 'row'); tot.append(el('b', 'g', 'Total'), el('b', null, money(o.total_cents))); box.append(tot);
+
+  if (canMozo) {
+    const menu = menuCache ??= await api('GET', '/menu');
+    const sel = el('select'), qty = el('input'); qty.type = 'number'; qty.value = 1; qty.min = 1; qty.style.width = '70px';
+    const notes = el('input'); notes.placeholder = 'Aclaración (opcional)';
+    for (const c of menu) for (const p of c.products.filter((p) => p.active && p.available)) { const op = el('option', null, `${p.name} — ${money(p.price_cents)}`); op.value = p.id; sel.append(op); }
+    const add = el('div', 'row'); add.append(sel, qty, notes, btn('Agregar', async () => {
+      await api('POST', `/orders/${o.id}/items`, { items: [{ productId: Number(sel.value), qty: Number(qty.value), notes: notes.value }] }); render();
+    }, 'pri'));
+    box.append(add);
+    const qr = el('div', 'row'); qr.append(btn('Pedir cuenta', async () => { await api('POST', `/orders/${o.id}/request-bill`); render(); }));
+    box.append(qr);
+  }
+  if (['cajero', 'admin'].includes(role)) {
+    const pay = el('div', 'row'); const m = el('select');
+    for (const x of ['efectivo', 'debito', 'credito', 'transferencia', 'qr']) { const op = el('option', null, x); op.value = x; m.append(op); }
+    const fac = el('input'); fac.type = 'checkbox';
+    const lab = el('label', null, ' emitir factura ahora'); lab.prepend(fac);
+    pay.append(el('b', null, 'Cobrar'), m, lab, btn(`Cobrar ${money(o.total_cents)}`, async () => {
+      const r = await api('POST', `/orders/${o.id}/close`, { payments: [{ method: m.value, amountCents: o.total_cents }], emitirFactura: fac.checked });
+      toast(r.invoice ? `Factura ${r.invoice.tipo} ${r.invoice.numero} (CAE ${r.invoice.cae})` : r.invoiceError ? 'Cobrado. Factura pendiente: ' + r.invoiceError : 'Cobrado. Factura pendiente.');
+      openTable = null; render();
+    }, 'pri'));
+    box.append(pay);
+  }
+  return box;
+}
+
+// ---------- Caja ----------
+async function viewCaja(root) {
+  const c = await api('GET', '/cash/current');
+  root.append(el('h2', null, `Caja de esta máquina: ${S.machine.registerId ?? 'ninguna'}`));
+  if (!S.machine.registerId) { root.append(el('p', 'mute', 'Esta PC no tiene caja asignada (REGISTER_ID).')); return; }
+  if (!c.session) {
+    const v = el('input'); v.type = 'number'; v.value = 0; v.min = 0; v.step = '0.01';
+    root.append(el('div', 'box', 'La caja está cerrada.'), (() => { const r = el('div', 'row'); r.append(el('span', null, 'Efectivo inicial $'), v, btn('Abrir caja', async () => { await api('POST', '/cash/open', { openingCents: Math.round(v.value * 100) }); render(); }, 'pri')); return r; })());
+    return;
+  }
+  const box = el('div', 'box');
+  const line = (k, v) => { const r = el('div', 'row'); r.append(el('span', 'g', k), el('b', null, v)); box.append(r); };
+  line('Efectivo inicial', money(c.session.opening_cents));
+  for (const [m, v] of Object.entries(c.byMethod)) line('Cobrado en ' + m, money(v));
+  line('Ingresos / egresos manuales', `${money(c.ingresos)} / ${money(c.egresos)}`);
+  line('Pedidos cobrados', c.orders);
+  for (const [k, v] of Object.entries(c.facturacion)) line('Facturas ' + k, `${v.n} · ${money(v.total)}`);
+  line('Efectivo esperado en caja', money(c.expectedCashCents));
+  root.append(box);
+  const kind = el('select'); for (const k of ['egreso', 'ingreso']) { const o = el('option', null, k); o.value = k; kind.append(o); }
+  const amt = el('input'); amt.type = 'number'; amt.step = '0.01'; amt.min = 0; const why = el('input'); why.placeholder = 'Motivo';
+  const mv = el('div', 'row'); mv.append(kind, amt, why, btn('Registrar movimiento', async () => { await api('POST', '/cash/movement', { kind: kind.value, amountCents: Math.round(amt.value * 100), reason: why.value }); render(); }));
+  const cnt = el('input'); cnt.type = 'number'; cnt.step = '0.01'; cnt.min = 0;
+  const cl = el('div', 'row'); cl.append(el('span', null, 'Efectivo contado $'), cnt, btn('Cerrar caja', async () => {
+    const r = await api('POST', '/cash/close', { countedCents: Math.round(cnt.value * 100) });
+    toast(`Caja cerrada. Esperado ${money(r.expectedCashCents)}, contado ${money(Math.round(cnt.value * 100))}, diferencia ${money(r.differenceCents)}`); render();
+  }, 'bad'));
+  root.append(mv, cl);
+}
+
+// ---------- Admin ----------
+async function viewAdmin(root) {
+  const menu = await api('GET', '/menu'); menuCache = null;
+  root.append(el('h2', null, 'Carta y precios (los cambios se ven al instante en el QR)'));
+  for (const c of menu) {
+    root.append(el('div', 'mute', c.name));
+    for (const p of c.products) {
+      const row = el('div', 'row'); const pr = el('input'); pr.type = 'number'; pr.step = '0.01'; pr.value = (p.price_cents / 100).toFixed(2);
+      row.append(el('span', 'g', p.name + (p.active ? '' : ' (baja)')), el('span', 'tag', p.station), pr,
+        btn('Guardar precio', async () => { await api('PUT', `/products/${p.id}/price`, { priceCents: Math.round(pr.value * 100) }); toast('Precio actualizado'); render(); }, 'pri'),
+        btn(p.available ? 'Marcar agotado' : 'Marcar disponible', async () => { await api('PUT', `/products/${p.id}/available`, { available: !p.available }); render(); }),
+        btn('Historial', async () => { const h = await api('GET', `/products/${p.id}/price-history`); alert(h.length ? h.map((x) => `${x.changed_at.slice(0, 16).replace('T', ' ')}: ${money(x.old_cents)} → ${money(x.new_cents)}`).join('\n') : 'Sin cambios'); }));
+      root.append(row);
+    }
+  }
+  const n = el('input'); n.placeholder = 'Nombre'; const pr = el('input'); pr.type = 'number'; pr.step = '0.01'; pr.placeholder = 'Precio';
+  const cat = el('select'); for (const c of menu) { const o = el('option', null, c.name); o.value = c.id; cat.append(o); }
+  const st = el('select'); for (const s of ['cocina', 'barra']) { const o = el('option', null, s); o.value = s; st.append(o); }
+  const nw = el('div', 'row'); nw.append(n, cat, st, pr, btn('Crear producto', async () => { await api('POST', '/products', { name: n.value, categoryId: Number(cat.value), station: st.value, priceCents: Math.round(pr.value * 100) }); render(); }, 'pri'));
+  root.append(el('h2', null, 'Nuevo producto'), nw);
+
+  root.append(el('h2', null, 'QR por mesa (abrir = simular al cliente)'));
+  for (const q of await api('GET', '/tables/qr-links')) {
+    const row = el('div', 'row'); const a = el('a', 'g', `${q.sector} · ${q.number} — ${q.url}`); a.href = q.url; a.target = '_blank';
+    row.append(a, btn('Rotar QR', async () => { if (confirm('El QR impreso dejará de funcionar. ¿Rotar?')) { await api('POST', `/tables/${q.id}/rotate-qr`); render(); } }, 'bad'));
+    root.append(row);
+  }
+}
+
+// ---------- Facturas ----------
+async function viewFacturas(root) {
+  root.append(el('h2', null, 'Cobrados pendientes de facturar'));
+  const list = await api('GET', '/invoices/pending');
+  if (!list.length) root.append(el('p', 'mute', 'No hay pendientes.'));
+  for (const i of list) {
+    const row = el('div', 'row'); const doc = el('input'); doc.placeholder = 'DNI/CUIT (opcional)';
+    row.append(el('span', 'g', `Pedido #${i.order_id} · ${money(i.total_cents)} · ${i.status}${i.error ? ' · ' + i.error : ''}`), doc,
+      btn('Emitir', async () => {
+        const nro = doc.value.replace(/\D/g, '');
+        const r = await api('POST', `/invoices/${i.order_id}/emit`, { receptor: nro ? { docTipo: nro.length === 11 ? 'CUIT' : 'DNI', docNro: nro } : { docTipo: 'CF' } });
+        toast(`Factura ${r.tipo} ${r.numero}`); render();
+      }, 'pri'));
+    root.append(row);
+  }
+}
+
+// ---------- Auditoría ----------
+async function viewAudit(root) {
+  root.append(el('h2', null, 'Últimos 100 eventos'));
+  const t = el('table'); t.innerHTML = '<tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Detalle</th></tr>';
+  for (const a of await api('GET', '/audit')) {
+    const r = el('tr'); for (const v of [a.at.slice(0, 19).replace('T', ' '), a.user ?? 'cliente/QR', a.action, a.detail ?? '']) r.append(el('td', null, v)); t.append(r);
+  }
+  root.append(t);
+}
+
+const VIEWS = { 'Salón': viewSalon, Caja: viewCaja, Admin: viewAdmin, Facturas: viewFacturas, 'Auditoría': viewAudit };
+let rendering = false;
+async function render() {
+  if (!S || rendering) return; rendering = true;
+  try {
+    const tabs = ROLE_TABS[S.user.role]; tab = tabs.includes(tab) ? tab : tabs[0];
+    $('nav').replaceChildren(...tabs.map((t) => { const b = el('button', t === tab ? 'on' : '', t); b.onclick = () => { tab = t; render(); }; return b; }));
+    const root = el('div'); await VIEWS[tab](root); $('main').replaceChildren(root);
+  } catch (e) { toast(e.message); } finally { rendering = false; }
+}
+function show() {
+  $('login').hidden = !!S; $('app').hidden = !S;
+  if (!S) return;
+  $('who').replaceChildren(document.createTextNode(S.user.name + ' '), el('span', 'mute', `(${S.user.role}) · máquina ${S.machine.id} · caja ${S.machine.registerId ?? '—'}`));
+  es?.close(); es = new EventSource('/api/stream?token=' + encodeURIComponent(S.token));
+  es.onmessage = () => { if (['Salón', 'Caja'].includes(tab)) render(); };
+  render();
+}
+function logout(silent) { if (S && !silent) api('POST', '/logout').catch(() => {}); es?.close(); S = null; openTable = null; sessionStorage.removeItem('p'); show(); }
+$('go').onclick = async () => {
+  try { S = await api('POST', '/login', { userId: Number($('user').value), pin: $('pin').value }); sessionStorage.setItem('p', JSON.stringify(S)); $('pin').value = ''; tab = null; show(); }
+  catch (e) { S = null; toast(e.message); }
+};
+$('pin').onkeydown = (e) => { if (e.key === 'Enter') $('go').click(); };
+$('out').onclick = () => logout(false);
+(async () => {
+  const users = await fetch('/api/login-users').then((r) => r.json());
+  $('user').replaceChildren(...users.map((u) => { const o = el('option', null, `${u.name} (${u.role})`); o.value = u.id; return o; }));
+  try { const s = JSON.parse(sessionStorage.getItem('p')); if (s) { S = s; await api('GET', '/tables'); } } catch { S = null; }
+  show();
+})();
+</script>
+</body>
+</html>

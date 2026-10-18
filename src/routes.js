@@ -101,6 +101,15 @@ export function buildRoutes(ctx, { rateLimit }) {
     route('POST', '/api/cash/close', ({ body, user }) =>
       cash.closeSession(ctx, config.registerId, body.countedCents, user)),
 
+    // ---------- auditoría (solo admin) ----------
+    route('GET', '/api/audit', ({ query, user }) => {
+      auth.requireRole(user, 'admin');
+      const limit = Math.min(Number(query.get('limit')) || 100, 500);
+      return ctx.db.all(
+        `SELECT a.id, a.at, u.name AS user, a.machine_id, a.action, a.entity, a.entity_id, a.detail
+         FROM audit_log a LEFT JOIN user u ON u.id = a.user_id ORDER BY a.id DESC LIMIT ?`, limit);
+    }),
+
     // ---------- facturación ----------
     route('GET', '/api/invoices/pending', () => billing.pendingInvoices(ctx)),
     route('POST', '/api/invoices/:orderId/emit', ({ params, body, user }) =>
