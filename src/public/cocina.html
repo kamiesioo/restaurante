@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cocina y salón</title>
+<style>
+  :root { --bg:#fff; --fg:#1d1d1f; --mute:#6e6e73; --line:#e5e5ea; --acc:#0a7d4f; --warn:#b45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#f2f2f2; --mute:#9a9aa0; --line:#2a2a2e; --acc:#34c78a; --warn:#f59e0b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.4 system-ui,sans-serif; background:var(--bg); color:var(--fg); padding:16px; }
+  header { display:flex; gap:12px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; flex:1; }
+  button, select, input { font:inherit; border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:8px; padding:8px 12px; }
+  button.pri { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+  .col h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--mute); margin:0 0 8px; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px; display:flex; gap:10px; align-items:center; }
+  .card .t { flex:1; } .card .where { font-weight:700; } .card .notes { color:var(--warn); font-size:14px; }
+  .empty { color:var(--mute); }
+  #login { max-width:320px; margin:10vh auto; display:grid; gap:10px; } #err { color:var(--warn); min-height:1.4em; }
+</style>
+</head>
+<body>
+<div id="login">
+  <h1>Ingresar</h1>
+  <select id="user"></select>
+  <input id="pin" type="password" inputmode="numeric" placeholder="PIN" autocomplete="off">
+  <button class="pri" id="go">Entrar</button>
+  <div id="err"></div>
+</div>
+<div id="app" hidden>
+  <header>
+    <h1 id="who"></h1>
+    <label>Estación <select id="station"><option value="cocina">Cocina</option><option value="barra">Barra</option></select></label>
+    <button id="out">Salir</button>
+  </header>
+  <div class="cols">
+    <section class="col"><h2>Por confirmar (QR)</h2><div id="confirm"></div></section>
+    <section class="col"><h2>A preparar</h2><div id="queue"></div></section>
+    <section class="col"><h2>Listos para llevar</h2><div id="ready"></div></section>
+  </div>
+</div>
+<script>
+let session = null;
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+async function api(method, path, body) {
+  const r = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json', ...(session && { Authorization: 'Bearer ' + session.token }) }, body: body && JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) { if (r.status === 401 && session) logout(true); throw new Error(j.error || 'Error'); }
+  return j;
+}
+function card(item, action) {
+  const c = el('div', 'card'); const t = el('div', 't');
+  t.append(el('div', 'where', `${item.sector} · Mesa ${item.table_number}`), el('div', null, `${item.qty} × ${item.name}`));
+  if (item.notes) t.append(el('div', 'notes', item.notes));
+  c.append(t);
+  if (action) { const b = el('button', 'pri', action.label); b.onclick = async () => { try { await action.run(); } catch (e) { alert(e.message); } refresh(); }; c.append(b); }
+  return c;
+}
+function fill(box, items, mk) { box.replaceChildren(...(items.length ? items.map(mk) : [el('div', 'empty', 'Nada por ahora')])); }
+const canKitchen = () => ['cocina', 'cajero', 'admin'].includes(session.user.role);
+const canFloor = () => ['mozo', 'cajero', 'admin'].includes(session.user.role);
+
+async function refresh() {
+  if (!session) return;
+  const [q, f] = await Promise.all([api('GET', '/kitchen?station=' + $('station').value), api('GET', '/floor')]);
+  const setStatus = (id, status) => api('POST', `/items/${id}/status`, { status });
+  fill($('queue'), q, (i) => card(i, canKitchen() && (i.status === 'enviado'
+    ? { label: 'Preparar', run: () => setStatus(i.id, 'en_preparacion') }
+    : { label: 'Listo', run: () => setStatus(i.id, 'listo') })));
+  fill($('ready'), f.listos, (i) => card(i, canFloor() && { label: 'Entregado', run: () => setStatus(i.id, 'entregado') }));
+  const pend = f.porConfirmar;
+  fill($('confirm'), pend, (i) => card(i, canFloor() && { label: 'Confirmar', run: () => api('POST', '/items/confirm', { itemIds: [i.id] }) }));
+}
+function startStream() {
+  const es = new EventSource('/api/stream?token=' + encodeURIComponent(session.token));
+  es.onmessage = () => refresh().catch(() => {});
+  es.onerror = () => {};
+  session.es = es;
+}
+function show() {
+  $('login').hidden = !!session; $('app').hidden = !session;
+  if (session) { $('who').textContent = `${session.user.name} (${session.user.role})`; if (session.user.role === 'cocina') $('station').value = 'cocina'; refresh(); startStream(); }
+}
+function logout(silent) {
+  if (session) { session.es?.close(); if (!silent) api('POST', '/logout').catch(() => {}); }
+  session = null; sessionStorage.removeItem('s'); show();
+}
+$('go').onclick = async () => {
+  try {
+    const r = await api('POST', '/login', { userId: Number($('user').value), pin: $('pin').value });
+    session = r; sessionStorage.setItem('s', JSON.stringify({ token: r.token, user: r.user })); $('pin').value = ''; $('err').textContent = ''; show();
+  } catch (e) { $('err').textContent = e.message; }
+};
+$('out').onclick = () => logout(false);
+$('station').onchange = refresh;
+(async () => {
+  const users = await fetch('/api/login-users').then((r) => r.json());
+  $('user').replaceChildren(...users.map((u) => { const o = el('option', null, `${u.name} (${u.role})`); o.value = u.id; return o; }));
+  try { const s = JSON.parse(sessionStorage.getItem('s')); if (s) { session = s; await api('GET', '/tables'); } } catch { session = null; }
+  show();
+})();
+setInterval(() => refresh().catch(() => {}), 15000);
+</script>
+</body>
+</html>
